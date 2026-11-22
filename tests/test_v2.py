@@ -55,3 +55,10 @@ def test_real_osm_network_and_route():
     from datetime import datetime,timezone
     out=timed_route_real(seg,bld,tr,(48.135072,10.0708028),(48.1353329,10.0707815),"balanced",depart=datetime(2026,6,1,7,0,tzinfo=timezone.utc))
     assert out is None or (out["path"] and out["segments"][0]["solar"] and out["network"]=="real_osm_persisted")
+def test_trained_vision_synthetic():
+    from backend.computer_vision.detect import analyse_bytes
+    import io
+    from ml.training.train_vision import generate
+    buf=io.BytesIO(); generate("pothole",42).save(buf,format="PNG")
+    r=analyse_bytes(buf.getvalue()); assert r["is_trained_model"] and r["training_data"].startswith("synthetic")
+    import json; m=json.load(open("ml/evaluation/vision_synth_metrics.json")); assert m["holdout_accuracy"]>0.6
