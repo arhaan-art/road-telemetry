@@ -190,7 +190,7 @@ def route_real(b:RealRouteIn):
     if not r: raise HTTPException(404,"no route on real network (disconnected area?)")
     return r
 @app.get("/api/health/full")
-def health_full(): return {"status":"ok","version":"2.0-dev","persistence":"sqlite (PostGIS DDL in migrations/)","defects":len(store.list_defects())}
+def health_full(): return {"status":"ok","version":"2.0-dev","persistence":"postgresql+postgis" if store._PG else "sqlite (set DATABASE_URL for PostGIS)","defects":len(store.list_defects())}
 DASH=Path(__file__).resolve().parents[2]/"apps"/"dashboard"
 @app.get("/")
 def root(): return FileResponse(DASH/"index.html")
