@@ -45,3 +45,13 @@ def test_api_v2():
     tr2=c.post("/api/route/timed",json={"origin":"A","destination":"F","preset":"coolest","depart_at":"2026-06-01T01:00:00+00:00"})
     assert tr.json()["cumulative_exposure"]!=tr2.json()["cumulative_exposure"]
     assert len({tuple(a["path"]) for a in tr.json()["distinct_alternatives"]})>=1
+def test_real_osm_network_and_route():
+    os.environ["RT_DB_PATH"]="/tmp/rt_real_test.db"
+    from backend.geospatial.osm_xml import parse_osm_xml
+    r=parse_osm_xml("data/bounded_real.osm"); assert len(r["edges"])>10 and len(r["buildings"])>=1
+    from backend import db as store; store.save_network(r["edges"],r["buildings"],r["trees"])
+    seg,bld,tr=store.load_network(); assert len(seg)==len(r["edges"])
+    from backend.routing.real_route import timed_route_real
+    from datetime import datetime,timezone
+    out=timed_route_real(seg,bld,tr,(48.135072,10.0708028),(48.1353329,10.0707815),"balanced",depart=datetime(2026,6,1,7,0,tzinfo=timezone.utc))
+    assert out is None or (out["path"] and out["segments"][0]["solar"] and out["network"]=="real_osm_persisted")

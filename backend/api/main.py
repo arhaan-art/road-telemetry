@@ -17,6 +17,8 @@ from backend.routing.graph import yen_k_shortest
 from backend.telemetry.dsp import features as dsp_features, classify_event, resample_uniform
 from backend.thermal_intelligence.solar import timed_segment_exposure
 from backend.geospatial.osm import parse_overpass, nearest_segment
+from backend.geospatial.osm_xml import parse_osm_xml
+from backend.routing.real_route import timed_route_real, build_real_graph
 from fastapi import Header, Request
 import time as _time
 _RATE={}
@@ -169,6 +171,24 @@ def route_timed(b:TimedRouteIn):
 def telemetry_features(b:TelemetryIn):
     rs=resample_uniform([s.dict() for s in b.samples]); f=dsp_features(rs); label,conf=classify_event(f,b.speed_kmh or 20)
     return {"features":f,"label":label,"confidence":conf,"method":"dsp_heuristic_v2_needs_labelled_eval"}
+@app.post("/api/network/import-fixture")
+def import_fixture():
+    """Load bounded REAL OSM extract bundled at data/bounded_real.osm (Augsburg planet extract via OSM/osmnx fixture, ODbL). Live Overpass remains scripts/import_osm.py."""
+    r=parse_osm_xml("data/bounded_real.osm"); store.save_network(r["edges"],r["buildings"],r["trees"])
+    return {"edges":len(r["edges"]),"buildings":len(r["buildings"]),"trees":len(r["trees"]),"nodes":r["node_count"],"source":"OpenStreetMap planet extract (ODbL), bounded fixture","postgis":"same schema in migrations/001_postgis.sql; executed store in this env is SQLite (no Postgres server available)"}
+@app.get("/api/network/status")
+def network_status():
+    seg,bld,tr=store.load_network(); return {"segments":len(seg),"buildings":len(bld),"trees":len(tr),"network":"real_osm" if seg else "sample_only"}
+class RealRouteIn(BaseModel): origin_lat:float; origin_lon:float; dest_lat:float; dest_lon:float; preset:str="balanced"; depart_at:Optional[str]=None; temp_c:float=32; rh:float=45; wind_ms:float=2; solar_wm2:float=800; cloud_frac:float=0; vehicle:str="two_wheeler"
+@app.post("/api/route/real")
+def route_real(b:RealRouteIn):
+    seg,bld,tr=store.load_network()
+    if not seg: raise HTTPException(409,"no real network imported; POST /api/network/import-fixture or run scripts/import_osm.py")
+    depart=datetime.fromisoformat(b.depart_at) if b.depart_at else datetime.now(timezone.utc)
+    if depart.tzinfo is None: depart=depart.replace(tzinfo=timezone.utc)
+    r=timed_route_real(seg,bld,tr,(b.origin_lat,b.origin_lon),(b.dest_lat,b.dest_lon),b.preset,depart=depart,temp_c=b.temp_c,rh=b.rh,wind_ms=b.wind_ms,solar_wm2=b.solar_wm2,cloud_frac=b.cloud_frac,vehicle=b.vehicle)
+    if not r: raise HTTPException(404,"no route on real network (disconnected area?)")
+    return r
 @app.get("/api/health/full")
 def health_full(): return {"status":"ok","version":"2.0-dev","persistence":"sqlite (PostGIS DDL in migrations/)","defects":len(store.list_defects())}
 DASH=Path(__file__).resolve().parents[2]/"apps"/"dashboard"

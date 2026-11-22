@@ -36,3 +36,22 @@ def log_audit(entity,eid,action,actor="system"):
 def seed_if_empty(sample):
     if not list_defects():
         for d in sample: add_defect(d)
+def init_network_tables():
+    with _lock, conn() as c:
+        c.executescript("""CREATE TABLE IF NOT EXISTS road_segments(id TEXT,from_id TEXT,to_id TEXT,from_lat REAL,from_lon REAL,to_lat REAL,to_lon REAL,name TEXT,highway TEXT,oneway INT,distance_m REAL,shade_frac REAL DEFAULT 0,pothole_penalty REAL DEFAULT 0);
+        CREATE TABLE IF NOT EXISTS buildings_osm(id INTEGER PRIMARY KEY,footprint TEXT,height_m REAL,height_confidence REAL);
+        CREATE TABLE IF NOT EXISTS trees_osm(id INTEGER PRIMARY KEY,canopy TEXT,canopy_confidence REAL);""")
+def save_network(edges,buildings,trees):
+    init_network_tables()
+    with _lock, conn() as c:
+        c.execute("DELETE FROM road_segments"); c.execute("DELETE FROM buildings_osm"); c.execute("DELETE FROM trees_osm")
+        c.executemany("INSERT INTO road_segments VALUES(?,?,?,?,?,?,?,?,?,?,?,0,0)",[(f"{e['from_id']}-{e['to_id']}-{i}",e["from_id"],e["to_id"],e["from_lat"],e["from_lon"],e["to_lat"],e["to_lon"],e["name"],e["highway"],1 if e["oneway"] else 0,e["distance_m"]) for i,e in enumerate(edges)])
+        c.executemany("INSERT INTO buildings_osm(footprint,height_m,height_confidence) VALUES(?,?,?)",[(json.dumps(b["footprint"]),b.get("height_m"),b.get("height_confidence",0.3)) for b in buildings])
+        c.executemany("INSERT INTO trees_osm(canopy,canopy_confidence) VALUES(?,?)",[(json.dumps(t["canopy"]),t.get("canopy_confidence",0.3)) for t in trees])
+def load_network():
+    init_network_tables()
+    with conn() as c:
+        seg=[dict(r) for r in c.execute("SELECT * FROM road_segments").fetchall()]
+        bld=[{"footprint":json.loads(r["footprint"]),"height_m":r["height_m"],"height_confidence":r["height_confidence"]} for r in c.execute("SELECT * FROM buildings_osm").fetchall()]
+        tr=[{"canopy":json.loads(r["canopy"]),"canopy_confidence":r["canopy_confidence"]} for r in c.execute("SELECT * FROM trees_osm").fetchall()]
+    return seg,bld,tr
