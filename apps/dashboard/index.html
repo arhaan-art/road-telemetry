@@ -14,7 +14,7 @@
 <script>
 const map=L.map('map').setView([12.977,77.60],14);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors'}).addTo(map);
 let routeLine;
-async function j(u,o){const r=await fetch(u,o);return r.json()}
+const API=new URLSearchParams(location.search).get('api')||''; async function j(u,o){const r=await fetch(API+u,o);return r.json()}
 async function load(){const g=await j('/api/graph');g.nodes.forEach(n=>L.circleMarker([n.lat,n.lon],{radius:7,color:'#38bdf8'}).addTo(map).bindPopup('Node '+n.id));
  const d=await j('/api/defects');d.defects.forEach(x=>L.circleMarker([x.lat,x.lon],{radius:6,color:'#ef4444'}).addTo(map).bindPopup(`${x.category} sev ${x.severity} ${x.status} conf ${x.confidence}`));
  document.getElementById('stats').textContent=JSON.stringify(await j('/api/dashboard/stats'),null,2);
