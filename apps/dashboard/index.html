@@ -1,0 +1,30 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Road Telemetry — Road + Thermal Intelligence</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>body{margin:0;font-family:system-ui;background:#0b1220;color:#e6edf3}header{padding:14px 18px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}h1{font-size:20px;margin:0}.badge{background:#7c2d12;padding:2px 8px;border-radius:99px;font-size:12px}#map{height:55vh}.panel{padding:14px 18px;display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px}.card{background:#111c2e;border:1px solid #263650;border-radius:12px;padding:12px}button,select{background:#f97316;color:#fff;border:0;padding:9px 12px;border-radius:8px;cursor:pointer}select{background:#1e293b;color:#fff;border:1px solid #334155}pre{white-space:pre-wrap;font-size:12px;color:#a5f3fc}a{color:#7dd3fc}</style></head>
+<body><header><h1>🛣️ Road Telemetry</h1><span class="badge">SAMPLE topology — estimates, not measurements</span>
+<label>Route preset <select id="preset"><option>balanced</option><option>fastest</option><option>coolest</option><option>smoothest</option></select></label>
+<label>Temp °C <select id="temp"><option>38</option><option>30</option><option>42</option></select></label>
+<button id="routeBtn">Compare routes A → F</button><button id="sensorBtn">Simulate sensor bump</button></header>
+<div id="map"></div><div class="panel">
+<div class="card"><h3>Route comparison</h3><pre id="routes">Click “Compare routes”.</pre></div>
+<div class="card"><h3>Thermal (UTCI-inspired proxy)</h3><pre id="thermal">—</pre></div>
+<div class="card"><h3>Defects & stats</h3><pre id="stats">—</pre></div>
+<div class="card"><h3>Navigation handoff</h3><pre id="nav">Limitations shown after routing.</pre></div></div>
+<script>
+const map=L.map('map').setView([12.977,77.60],14);L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors'}).addTo(map);
+let routeLine;
+async function j(u,o){const r=await fetch(u,o);return r.json()}
+async function load(){const g=await j('/api/graph');g.nodes.forEach(n=>L.circleMarker([n.lat,n.lon],{radius:7,color:'#38bdf8'}).addTo(map).bindPopup('Node '+n.id));
+ const d=await j('/api/defects');d.defects.forEach(x=>L.circleMarker([x.lat,x.lon],{radius:6,color:'#ef4444'}).addTo(map).bindPopup(`${x.category} sev ${x.severity} ${x.status} conf ${x.confidence}`));
+ document.getElementById('stats').textContent=JSON.stringify(await j('/api/dashboard/stats'),null,2);
+ document.getElementById('thermal').textContent=JSON.stringify(await j('/api/thermal/segment?shade_frac=0.6'),null,2)+' vs unshaded: '+JSON.stringify(await j('/api/thermal/segment?shade_frac=0.05'),null,2)}
+document.getElementById('routeBtn').onclick=async()=>{const preset=document.getElementById('preset').value,temp_c=+document.getElementById('temp').value;
+ const r=await j('/api/route',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({origin:'A',destination:'F',preset,temp_c})});
+ document.getElementById('routes').textContent=Object.entries({chosen:r.route,...r.alternatives}).map(([k,v])=>`${k}: ${v.path.join('→')} ${v.distance_m}m ${Math.round(v.duration_s)}s exposure-dose ${v.cumulative_exposure}`).join('\n');
+ document.getElementById('nav').innerHTML=`<a href="${r.navigation.google_maps.url}" target="_blank">Open in Google Maps</a>\n${r.navigation.google_maps.limitation}\n${r.navigation.mappls.limitation}`;
+ if(routeLine)map.removeLayer(routeLine);routeLine=L.polyline(r.navigation.geojson_route.coordinates.map(c=>[c[1],c[0]]),{color:'#f97316',weight:5}).addTo(map)};
+document.getElementById('sensorBtn').onclick=async()=>{const samples=[];for(let i=0;i<20;i++)samples.push({t:i*0.1,ax:0.2,ay:0.1,az:i===10?16:9.8,lat:12.973+i*0.00001,lon:77.602});
+ const r=await j('/api/telemetry/ingest',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({samples,speed_kmh:22})});alert('Candidate events: '+JSON.stringify(r.candidate_events));load()};
+load();
+</script></body></html>

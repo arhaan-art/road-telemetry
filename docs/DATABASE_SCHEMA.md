@@ -1,0 +1,2 @@
+# Database Schema (PostGIS target)
+Tables: users, vehicles, devices, road_segments(geom LineString, shade_frac, pothole_penalty), telemetry_events(geom Point, accel jsonb), road_defects(geom, category, severity, status, confidence), visual_evidence(object_key), weather_observations, buildings(geom,height), trees(geom,canopy), thermal_estimates(segment_id, valid_at, utci_proxy), route_calculations(weights jsonb, path). GiST indexes on all geom columns. Media in object storage, never Postgres blobs.

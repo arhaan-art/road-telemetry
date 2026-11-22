@@ -1,0 +1,2 @@
+# Technical Specification
+Cost: C(e)=wt·T+wp·P+wh·H, weights normalised to sum 1, live costs ≥0. H uses (1−shade)·time on segment × thermal factor; exposure dose = Σ max(0, UTCIproxy−26)·duration_s (cumulative, not shaded-km counting). Hysteresis: switch route only if >5% better. Thermal: solar position → shadow length h/tan(elev) → segment shade (buildings + overhanging canopy only) → UTCI-inspired proxy (MRT proxy, vapour, relative wind incl. rider speed for two-wheelers). Not validated UTCI/WBGT.
