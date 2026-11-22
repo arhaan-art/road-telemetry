@@ -45,3 +45,17 @@ def estimate_utci_proxy(temp_c,rh_pct,wind_ms,solar_wm2,shade_frac,vehicle="two_
 def exposure_for_duration(utci_proxy_c,duration_s):
     # cumulative dose above 26C reference, degree-seconds
     return round(max(0.0,utci_proxy_c-26.0)*duration_s,1)
+from backend.thermal_intelligence.shadow import segment_shade_polygon
+def timed_segment_exposure(seg,depart_dt,temp_c,rh,wind_ms,wind_dir_deg,solar_wm2,cloud_frac,buildings,trees,vehicle="two_wheeler"):
+    """Arrival-time thermal for one segment: solar at segment midpoint time, polygon shade, proxy, dose."""
+    from datetime import timedelta
+    mid_lat=(seg["from_lat"]+seg["to_lat"])/2; mid_lon=(seg["from_lon"]+seg["to_lon"])/2
+    travel_s=seg.get("travel_s",60); mid_dt=depart_dt+timedelta(seconds=travel_s/2)
+    sol=solar_position(mid_lat,mid_lon,mid_dt)
+    shade=segment_shade_polygon(seg,buildings,trees,sol["elevation_deg"],sol["azimuth_deg"])["shade_frac"] if (buildings or trees) else seg.get("shade_frac",0.3)
+    eff_solar=solar_wm2*(1-cloud_frac)*max(0.0,__import__("math").sin(__import__("math").radians(sol["elevation_deg"]))) if sol["elevation_deg"]>0 else 0.0
+    # rider relative wind: ambient wind vector vs travel assumed eastward-free — magnitude approx with vehicle speed
+    speed_kmh=seg.get("speed_kmh",25)
+    u=estimate_utci_proxy(temp_c,rh,wind_ms,eff_solar,shade,vehicle,speed_kmh)
+    return {"arrival_at":mid_dt.isoformat(),"solar":sol,"shade_frac":shade,"effective_solar_wm2":round(eff_solar,1),
+            **u,"exposure_dose":exposure_for_duration(u["utci_proxy_c"],travel_s),"travel_s":travel_s,"confidence":"reduced: proxy unvalidated, shade geometry depends on building/tree input completeness"}

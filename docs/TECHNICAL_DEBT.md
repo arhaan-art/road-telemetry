@@ -1,0 +1,2 @@
+# Technical Debt
+P0 security: password hashing/token (fixed Stage1: PBKDF2-HMAC + signed expiring tokens; Argon2id when argon2-cffi available). P0 persistence (Stage1 SQLite now, PostGIS DDL migrations/001). P1 arrival-time thermal (Stage5), polygon shadows (Stage5), distinct alternatives/Yen (Stage6), OSM ingestion (Stage2). P2 trained vision (needs licensed dataset — pipeline only, no fabricated model), video, cloud deploy (no hosting creds in env), Android build (SDK present, no Gradle wrapper download verified).

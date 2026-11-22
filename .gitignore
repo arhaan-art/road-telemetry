@@ -10,3 +10,4 @@ ml/models/*.pt
 node_modules/
 dist/
 .DS_Store
+data/*.db

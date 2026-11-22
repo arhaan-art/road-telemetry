@@ -15,6 +15,8 @@ python3 -m uvicorn backend.api.main:app --port 8000
 python3 -m pytest -q
 ```
 
+**2.0 additions:** persistent SQLite store (PostGIS DDL in `migrations/`), secure auth (`/api/auth/login`, Bearer required to verify defects), DSP v2 (`/api/telemetry/features`), OSM ingestion (`scripts/import_osm.py`), polygon shadows, arrival-time routing (`POST /api/route/timed` with `depart_at`), Yen distinct alternatives, Android Gradle project in `apps/mobile`. Still not claimed: trained vision model, live Overpass fetch (upstream 502 at audit time), cloud deployment, field validation.
+
 ## What's implemented
 
 | Area | Status |

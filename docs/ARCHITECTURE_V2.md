@@ -1,0 +1,2 @@
+# Architecture V2
+Same modular monolith. New: backend/db.py (SQLite dev / Postgres via DATABASE_URL, same repository API), backend/security.py, backend/geospatial/osm.py + matching, backend/telemetry/dsp.py, backend/thermal_intelligence/shadow.py (polygon projection), routing Yen + timed costs. Road segment stays the shared unit (segment_id on defects/thermal). CRS: WGS84 interchange, local ENU metres for geometry.
