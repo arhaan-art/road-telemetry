@@ -48,7 +48,7 @@ class MainActivity : Activity(), SensorEventListener, LocationListener {
             .put("lat", loc.latitude).put("lon", loc.longitude).put("speed", loc.speed.toDouble()).put("gps_time", loc.time))
         if (buffer.length() >= 250) flushToDisk()
     }
-    private fun flushToDisk() { File(filesDir, "queue.jsonl").appendText(buffer.toString() + "\n"); buffer.clear() }
+    private fun flushToDisk() { File(filesDir, "queue.jsonl").appendText(buffer.toString() + "\n"); while (buffer.length() > 0) buffer.remove(0) }
     fun upload(baseUrl: String, token: String) = thread {
         val f = File(filesDir, "queue.jsonl"); if (!f.exists()) return@thread
         val c = URL("$baseUrl/api/telemetry/ingest").openConnection() as HttpURLConnection

@@ -1,2 +1,3 @@
 # Android app
 Real Gradle project (Kotlin). SensorService collects accelerometer+gyroscope+GPS with elapsedRealtime timestamps, buffers to a local file queue, uploads via TelemetryClient when network returns. Build: open in Android Studio (Gradle wrapper sync downloads AGP) or `gradle assembleDebug` with Android SDK. Not built in CI (no emulator/device in this environment) — stated honestly.
+Verified build (2026-11-22): `ANDROID_HOME=~/android-sdk JAVA_HOME=~/jdk ./gradlew assembleDebug` produced app/build/outputs/apk/debug/app-debug.apk (2.0 MB) in this environment. APK is a build artifact — not committed.
