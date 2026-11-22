@@ -11,8 +11,23 @@ from backend.thermal_intelligence.solar import solar_position, segment_shade, es
 from backend.routing.graph import Graph, PRESETS, normalise_weights, dijkstra, astar, bellman_ford, floyd_warshall, kruskal, summarise
 from backend.computer_vision.detect import analyse_bytes, evaluate
 from backend.geospatial.geo import haversine_m
+from backend import db as store
+from backend.security import hash_pw, verify_pw, make_token, parse_token
+from backend.routing.graph import yen_k_shortest
+from backend.telemetry.dsp import features as dsp_features, classify_event, resample_uniform
+from backend.thermal_intelligence.solar import timed_segment_exposure
+from backend.geospatial.osm import parse_overpass, nearest_segment
+from backend.geospatial.osm_xml import parse_osm_xml
+from backend.routing.real_route import timed_route_real, build_real_graph
+from fastapi import Header, Request
+import time as _time
+_RATE={}
+def rate_ok(key,limit=120,window=60):
+    now=_time.time(); hits=[t for t in _RATE.get(key,[]) if now-t<window]
+    if len(hits)>=limit: return False
+    hits.append(now); _RATE[key]=hits; return True
 
-app=FastAPI(title="Road Telemetry",version="0.1.0",description="Crowd road-quality + thermal route intelligence. Estimates are labelled; not measured body temperature / not validated WBGT.")
+app=FastAPI(title="Road Telemetry",version="2.0.0",description="Crowd road-quality + thermal route intelligence. Estimates are labelled; not measured body temperature / not validated WBGT.")
 COORDS={"A":(12.9716,77.5946),"B":(12.9750,77.6000),"C":(12.9690,77.6050),"D":(12.9800,77.5920),"E":(12.9850,77.6020),"F":(12.9720,77.6150)}
 # Illustrative Bengaluru grid — SAMPLE topology for prototype demo, labelled as such; replace with OSM import (scripts/import_osm.py)
 EDGES=[("A","B",700,28,0.55,0.15,"MG Rd (sample)"),("B","E",800,32,0.2,0.35,"Brigade Rd (sample)"),
@@ -26,8 +41,12 @@ def build_graph():
         g.add_edge(v,u,distance_m=d,speed_kmh=sp,pothole_penalty=pen,shade_frac=shade,name=name+" (rev)",lat_u=COORDS[v][0],lon_u=COORDS[v][1],lat_v=COORDS[u][0],lon_v=COORDS[u][1])
     return g
 GRAPH=build_graph()
-DEFECTS=[{"id":1,"lat":12.973,"lon":77.602,"category":"pothole","severity":4,"status":"suspected","confidence":0.62,"reports":3,"source":"crowd_sample_labelled"}]
-USERS={}
+store.seed_if_empty([{"lat":12.973,"lon":77.602,"category":"pothole","severity":4,"status":"suspected","confidence":0.62,"reports":3,"source":"crowd_sample_labelled","segment_id":None}])
+def _auth(authorization=None):
+    if not authorization or not authorization.startswith("Bearer "): raise HTTPException(401,"bearer token required")
+    u=parse_token(authorization[7:])
+    if not u: raise HTTPException(401,"invalid/expired token")
+    return u
 
 class Sample(BaseModel): t:float; ax:float; ay:float; az:float; lat:Optional[float]=None; lon:Optional[float]=None
 class TelemetryIn(BaseModel): device_id:str="dev-1"; vehicle:str="two_wheeler"; speed_kmh:Optional[float]=20; samples:List[Sample]
@@ -40,31 +59,43 @@ def health(): return {"status":"ok","version":"0.1.0","data_labelling":"sample e
 @app.get("/api/graph")
 def graph(): return {"nodes":[{"id":k,"lat":v[0],"lon":v[1]} for k,v in COORDS.items()],
   "edges":[{"from":u,"to":v,"name":e["name"],"distance_m":e["distance_m"],"shade_frac":e["shade_frac"],"pothole_penalty":e["pothole_penalty"]} for (u,v),e in list(GRAPH.edges.items())[:9]],"source":"sample_topology_not_osm"}
+class LoginIn(BaseModel): email:str; password:str
 @app.post("/api/auth/register")
 def register(b:RegisterIn):
-    if b.email in USERS: raise HTTPException(409,"exists")
-    USERS[b.email]={"name":b.name,"pw":hashlib.sha256(b.password.encode()).hexdigest()}; return {"email":b.email,"token":"demo-"+hashlib.sha256(b.email.encode()).hexdigest()[:16]}
+    if len(b.password)<8: raise HTTPException(422,"password must be >=8 chars")
+    if not store.create_user(b.email,hash_pw(b.password),b.name): raise HTTPException(409,"exists")
+    return {"email":b.email,"token":make_token(b.email)}
+@app.post("/api/auth/login")
+def login(b:LoginIn):
+    u=store.get_user(b.email)
+    if not u or not verify_pw(b.password,u["pw_hash"]): raise HTTPException(401,"invalid credentials")
+    return {"email":b.email,"token":make_token(b.email,u.get("role","rider"))}
+@app.get("/api/auth/me")
+def me(authorization: str = Header(default=None)): return _auth(authorization)
 @app.post("/api/telemetry/ingest")
 def ingest(b:TelemetryIn):
     ev=detect([s.dict() for s in b.samples],speed_kmh=b.speed_kmh)
     for e in ev:
-        if e.get("lat") is not None: DEFECTS.append({"id":len(DEFECTS)+1,"lat":e["lat"],"lon":e["lon"],"category":e["category"],"severity":3,"status":e["status"],"confidence":e["confidence"],"reports":1,"source":"sensor"})
+        if e.get("lat") is not None: store.add_defect({"lat":e["lat"],"lon":e["lon"],"category":e["category"],"severity":3,"status":e["status"],"confidence":e["confidence"],"reports":1,"source":"sensor","segment_id":None})
     return {"received":len(b.samples),"candidate_events":ev,"note":"candidates are suspected, not confirmed potholes"}
 @app.get("/api/defects")
-def defects(status:Optional[str]=None): return {"defects":[d for d in DEFECTS if not status or d["status"]==status],"count":len(DEFECTS)}
+def defects(status:Optional[str]=None):
+    d=store.list_defects(status); return {"defects":d,"count":len(d)}
 @app.post("/api/defects")
 def add_defect(b:DefectIn):
-    d={"id":len(DEFECTS)+1,**b.dict(),"status":"unverified","confidence":0.3,"reports":1,"source":"manual"}
-    DEFECTS.append(d); return d
+    payload={**b.dict(),"status":"unverified","confidence":0.3,"reports":1,"source":"manual","segment_id":None}
+    payload.pop("notes",None); did=store.add_defect(payload); return store.get_defect(did)
 @app.post("/api/defects/{did}/verify")
-def verify(did:int):
-    for d in DEFECTS:
-        if d["id"]==did:
-            d["reports"]+=1; c,s=cluster_confidence(d["reports"],d["confidence"],age_days=1); d["confidence"],d["status"]=c,s; return d
-    raise HTTPException(404,"not found")
+def verify(did:int,authorization: str = Header(default=None)):
+    user=_auth(authorization); d=store.get_defect(did)
+    if not d: raise HTTPException(404,"not found")
+    c,st=cluster_confidence(d["reports"]+1,d["confidence"],age_days=1); out=store.update_defect(did,reports=d["reports"]+1,confidence=c,status=st); store.log_audit("defect",did,"verify",user["sub"]); return out
 @app.post("/api/vision/analyse")
 async def vision(file:UploadFile=File(...)):
-    return analyse_bytes(await file.read())
+    data=await file.read()
+    if len(data)>5_000_000: raise HTTPException(413,"max 5MB")
+    if file.content_type and not file.content_type.startswith("image/"): raise HTTPException(415,"image only")
+    return analyse_bytes(data)
 @app.get("/api/vision/evaluate-demo")
 def eval_demo(): return evaluate(["pothole","normal_road","pothole","rough_patch"],["pothole","normal_road","rough_patch","rough_patch"])
 @app.get("/api/thermal/solar")
@@ -110,8 +141,56 @@ def algo_demo():
     return {"bellman_ford_negative_cycle":neg,"floyd_warshall_nodes":nodes,"floyd_A_to_F":D[nodes.index("A")][nodes.index("F")],"kruskal_mst_edges":mst,"kruskal_total_m":total,
             "note":"BF/FW/Kruskal are analysis tools, not live routing"}
 @app.get("/api/dashboard/stats")
-def stats(): return {"defects":len(DEFECTS),"by_status":{s:sum(1 for d in DEFECTS if d["status"]==s) for s in set(d["status"] for d in DEFECTS)},"segments":len(EDGES),"freshness":"sample/demo data — replace with live feeds"}
+def stats():
+    all_d=store.list_defects(); return {"defects":len(all_d),"by_status":{s:sum(1 for d in all_d if d["status"]==s) for s in set(d["status"] for d in all_d)},"segments":len(EDGES),"freshness":"persistent SQLite store; sample topology still labelled"}
 
+class TimedRouteIn(RouteIn): depart_at:Optional[str]=None; cloud_frac:float=0.0
+@app.post("/api/route/timed")
+def route_timed(b:TimedRouteIn):
+    """Arrival-time routing: thermal re-evaluated per segment at propagated arrival; Yen distinct alternatives."""
+    from datetime import timedelta
+    depart=datetime.fromisoformat(b.depart_at) if b.depart_at else datetime.now(timezone.utc)
+    if depart.tzinfo is None: depart=depart.replace(tzinfo=timezone.utc)
+    w=normalise_weights(*(PRESETS[b.preset] if b.preset!="custom" else (b.wt,b.wp,b.wh)))
+    cost,path=dijkstra(GRAPH,b.origin,b.destination,w)
+    if not path: raise HTTPException(404,"no route")
+    segs=[]; t=depart; total_dose=0.0; shaded_s=0.0
+    for a,bb in zip(path,path[1:]):
+        e=GRAPH.edges[(a,bb)]; seg={"from_lat":COORDS[a][0],"from_lon":COORDS[a][1],"to_lat":COORDS[bb][0],"to_lon":COORDS[bb][1],"travel_s":e["travel_s"],"speed_kmh":e["speed_kmh"],"shade_frac":e["shade_frac"]}
+        r=timed_segment_exposure(seg,t,b.temp_c,b.rh,b.wind_ms,90,b.solar_wm2,b.cloud_frac,[],[],b.vehicle)
+        r["from"],r["to"],r["name"]=a,bb,e["name"]; segs.append(r); total_dose+=r["exposure_dose"]; shaded_s+=r["shade_frac"]*e["travel_s"]; t=t+timedelta(seconds=e["travel_s"])
+    alts=[]
+    seen={tuple(path)}
+    for c,p in yen_k_shortest(build_graph(),b.origin,b.destination,w,k=4):
+        if tuple(p) not in seen: seen.add(tuple(p)); alts.append(summarise(build_graph(),p,w,{}))
+    for name in ["fastest","coolest","smoothest"]:
+        ww=normalise_weights(*PRESETS[name]); c,p=dijkstra(GRAPH,b.origin,b.destination,ww)
+        if p and tuple(p) not in seen: seen.add(tuple(p)); alts.append({"preset":name,**summarise(GRAPH,p,ww,{})})
+    return {"depart_at":depart.isoformat(),"arrival_at":t.isoformat(),"path":path,"segments":segs,"cumulative_exposure":round(total_dose,1),"shaded_duration_s":round(shaded_s,1),"distinct_alternatives":alts,"note":"per-segment solar at propagated arrival; proxy unvalidated"}
+@app.post("/api/telemetry/features")
+def telemetry_features(b:TelemetryIn):
+    rs=resample_uniform([s.dict() for s in b.samples]); f=dsp_features(rs); label,conf=classify_event(f,b.speed_kmh or 20)
+    return {"features":f,"label":label,"confidence":conf,"method":"dsp_heuristic_v2_needs_labelled_eval"}
+@app.post("/api/network/import-fixture")
+def import_fixture():
+    """Load bounded REAL OSM extract bundled at data/bounded_real.osm (Augsburg planet extract via OSM/osmnx fixture, ODbL). Live Overpass remains scripts/import_osm.py."""
+    r=parse_osm_xml("data/bounded_real.osm"); store.save_network(r["edges"],r["buildings"],r["trees"])
+    return {"edges":len(r["edges"]),"buildings":len(r["buildings"]),"trees":len(r["trees"]),"nodes":r["node_count"],"source":"OpenStreetMap planet extract (ODbL), bounded fixture","postgis":"same schema in migrations/001_postgis.sql; executed store in this env is SQLite (no Postgres server available)"}
+@app.get("/api/network/status")
+def network_status():
+    seg,bld,tr=store.load_network(); return {"segments":len(seg),"buildings":len(bld),"trees":len(tr),"network":"real_osm" if seg else "sample_only"}
+class RealRouteIn(BaseModel): origin_lat:float; origin_lon:float; dest_lat:float; dest_lon:float; preset:str="balanced"; depart_at:Optional[str]=None; temp_c:float=32; rh:float=45; wind_ms:float=2; solar_wm2:float=800; cloud_frac:float=0; vehicle:str="two_wheeler"
+@app.post("/api/route/real")
+def route_real(b:RealRouteIn):
+    seg,bld,tr=store.load_network()
+    if not seg: raise HTTPException(409,"no real network imported; POST /api/network/import-fixture or run scripts/import_osm.py")
+    depart=datetime.fromisoformat(b.depart_at) if b.depart_at else datetime.now(timezone.utc)
+    if depart.tzinfo is None: depart=depart.replace(tzinfo=timezone.utc)
+    r=timed_route_real(seg,bld,tr,(b.origin_lat,b.origin_lon),(b.dest_lat,b.dest_lon),b.preset,depart=depart,temp_c=b.temp_c,rh=b.rh,wind_ms=b.wind_ms,solar_wm2=b.solar_wm2,cloud_frac=b.cloud_frac,vehicle=b.vehicle)
+    if not r: raise HTTPException(404,"no route on real network (disconnected area?)")
+    return r
+@app.get("/api/health/full")
+def health_full(): return {"status":"ok","version":"2.0-dev","persistence":"sqlite (PostGIS DDL in migrations/)","defects":len(store.list_defects())}
 DASH=Path(__file__).resolve().parents[2]/"apps"/"dashboard"
 @app.get("/")
 def root(): return FileResponse(DASH/"index.html")

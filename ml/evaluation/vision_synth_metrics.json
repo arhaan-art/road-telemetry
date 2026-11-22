@@ -1,0 +1,28 @@
+{
+ "dataset": "SYNTHETIC generated images only - NOT real-world validation",
+ "holdout_accuracy": 1.0,
+ "per_class": {
+  "pothole": {
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "rough_patch": {
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "road_crack": {
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "speed_breaker": {
+   "precision": 1.0,
+   "recall": 1.0
+  },
+  "normal_road": {
+   "precision": 1.0,
+   "recall": 1.0
+  }
+ },
+ "n_train": 450,
+ "n_holdout": 150
+}
