@@ -173,9 +173,9 @@ def telemetry_features(b:TelemetryIn):
     return {"features":f,"label":label,"confidence":conf,"method":"dsp_heuristic_v2_needs_labelled_eval"}
 @app.post("/api/network/import-fixture")
 def import_fixture():
-    """Load bounded REAL OSM extract bundled at data/bounded_real.osm (Augsburg planet extract via OSM/osmnx fixture, ODbL). Live Overpass remains scripts/import_osm.py."""
-    r=parse_osm_xml("data/bounded_real.osm"); store.save_network(r["edges"],r["buildings"],r["trees"])
-    return {"edges":len(r["edges"]),"buildings":len(r["buildings"]),"trees":len(r["trees"]),"nodes":r["node_count"],"source":"OpenStreetMap planet extract (ODbL), bounded fixture","postgis":"same schema in migrations/001_postgis.sql; executed store in this env is SQLite (no Postgres server available)"}
+    """Load bounded REAL New Delhi OSM extract at data/bounded_delhi.osm. Live Overpass remains scripts/import_osm.py."""
+    r=parse_osm_xml("data/bounded_delhi.osm"); store.save_network(r["edges"],r["buildings"],r["trees"])
+    return {"edges":len(r["edges"]),"buildings":len(r["buildings"]),"trees":len(r["trees"]),"nodes":r["node_count"],"area":"Connaught Place, New Delhi (bbox 28.618-28.640, 77.205-77.230)","source":"BBBike NewDelhi city extract of OpenStreetMap data (ODbL), stream-cropped with scripts/crop_extract.py; upstream Geofabrik india-latest is country-scale PBF, not a small extract","postgis":"same schema in migrations/001_postgis.sql; executed store in this env is SQLite (no Postgres server available)"}
 @app.get("/api/network/status")
 def network_status():
     seg,bld,tr=store.load_network(); return {"segments":len(seg),"buildings":len(bld),"trees":len(tr),"network":"real_osm" if seg else "sample_only"}
