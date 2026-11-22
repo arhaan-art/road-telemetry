@@ -86,3 +86,33 @@ def should_switch(old_cost,new_cost,threshold=0.05):
     """Hysteresis: avoid route flapping on minor differences."""
     if old_cost is None: return True
     return new_cost < old_cost*(1-threshold)
+def yen_k_shortest(g,src,dst,weights,k=3):
+    first_cost,first=dijkstra(g,src,dst,weights)
+    if not first: return []
+    results=[(first_cost,first)]; candidates=[]
+    def remove_edge(u,v):
+        e=g.edges.pop((u,v),None)
+        g.adj[u]=[(vv,ee) for vv,ee in g.adj.get(u,[]) if vv!=v]
+        return e
+    def restore_edge(u,v,e):
+        if e is None: return
+        g.edges[(u,v)]=e; g.adj[u].append((v,e))
+    for kk in range(1,k):
+        prev_path=results[-1][1]
+        for i in range(len(prev_path)-1):
+            spur=prev_path[i]; root=prev_path[:i+1]
+            removed=[]
+            for c,p in results:
+                if len(p)>i and p[:i+1]==root and (p[i],p[i+1]) in g.edges: removed.append((p[i],p[i+1],remove_edge(p[i],p[i+1])))
+            saved_adj={n:list(g.adj.get(n,[])) for n in root[:-1]}
+            for n in root[:-1]: g.adj[n]=[]
+            cost,spur_path=dijkstra(g,spur,dst,weights)
+            for n,adj in saved_adj.items(): g.adj[n]=adj
+            for u,v,e in removed: restore_edge(u,v,e)
+            if spur_path:
+                total=root[:-1]+spur_path
+                if total not in [p for _,p in results+candidates]:
+                    tc=sum(g.edge_cost(g.edges[(a,b)],weights) for a,b in zip(total,total[1:])); candidates.append((tc,total))
+        if not candidates: break
+        candidates.sort(key=lambda x:x[0]); results.append(candidates.pop(0))
+    return results
